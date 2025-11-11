@@ -3,6 +3,7 @@ import mediapipe as mp
 import numpy as np
 import random
 import time
+import os
 
 # =======================
 # --- Mediapipe Setup ---
@@ -19,7 +20,24 @@ class SnakeGame:
         self.w = w
         self.h = h
         self.cell = cell_size
+        self.high_score_file = "highscore.txt"
+        self.high_score = self.load_high_score()
         self.reset()
+
+    def load_high_score(self):
+        """Load saved high score from file"""
+        if os.path.exists(self.high_score_file):
+            try:
+                with open(self.high_score_file, "r") as f:
+                    return int(f.read().strip())
+            except:
+                return 0
+        return 0
+
+    def save_high_score(self):
+        """Save current high score to file"""
+        with open(self.high_score_file, "w") as f:
+            f.write(str(self.high_score))
 
     def reset(self):
         self.snake = [(self.w // 2, self.h // 2)]
@@ -45,8 +63,11 @@ class SnakeGame:
         dx, dy = self.direction
         new_head = ((head_x + dx) % self.w, (head_y + dy) % self.h)
 
-        # ✅ Fix: only check self-collision if snake > 4
+        # ✅ Prevent early self-collision (only check if length > 4)
         if len(self.snake) > 4 and new_head in self.snake:
+            if self.score > self.high_score:
+                self.high_score = self.score
+                self.save_high_score()
             self.game_over = True
             return
 
@@ -60,21 +81,28 @@ class SnakeGame:
             self.snake.pop()
 
     def draw(self, img):
-        # Food
+        # Draw food
         cv2.rectangle(img, self.food,
                       (self.food[0] + self.cell, self.food[1] + self.cell),
                       (0, 0, 255), cv2.FILLED)
 
-        # Snake
+        # Draw snake
         for i, (x, y) in enumerate(self.snake):
             color = (0, 255, 0) if i > 0 else (0, 150, 255)
             cv2.rectangle(img, (x, y), (x + self.cell, y + self.cell), color, cv2.FILLED)
 
-        # Score
+        # Draw current score (top left)
         cv2.putText(img, f"Score: {self.score}", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
-        # ✅ Fix: centered “GAME OVER” text
+        # Draw high score (top right)
+        output = self.high_score if self.high_score > self.score else self.score
+        text = f"High Score: {output}"
+        (text_w, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)
+        cv2.putText(img, text, (self.w - text_w - 10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+
+        # Game over screen
         if self.game_over:
             font = cv2.FONT_HERSHEY_SIMPLEX
             text1 = "GAME OVER"
@@ -96,7 +124,7 @@ class SnakeGame:
 # --- Main Function ---
 # ==========================
 def main():
-    cap = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)
+    cap = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)  # macOS camera fix
     game = SnakeGame()
     speed = 0.1
     last_move = time.time()
@@ -120,10 +148,10 @@ def main():
 
         if result.multi_hand_landmarks:
             for hand_landmarks in result.multi_hand_landmarks:
-                lm = hand_landmarks.landmark[8]
+                lm = hand_landmarks.landmark[8]  # Index fingertip
                 x, y = int(lm.x * game.w), int(lm.y * game.h)
 
-                # Draw fingertip + center
+                # Draw fingertip + center reference
                 cv2.circle(frame, (cx, cy), 10, (255, 255, 0), 2)
                 cv2.circle(frame, (x, y), 15, (0, 255, 255), cv2.FILLED)
 
@@ -141,14 +169,16 @@ def main():
 
                 mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
+        # Apply direction changes
         if direction:
             game.change_direction(direction)
 
+        # Update snake movement
         if time.time() - last_move > speed:
             game.update()
             last_move = time.time()
 
-        # --- Split-screen layout ---
+        # Create split-screen display
         board = np.zeros((game.h, game.w, 3), dtype=np.uint8)
         game.draw(board)
         frame_resized = cv2.resize(frame, (game.w, game.h))
@@ -156,6 +186,7 @@ def main():
 
         cv2.imshow(window_name, combined)
 
+        # Controls
         key = cv2.waitKey(10)
         if key != -1:
             k = chr(key & 0xFF).lower()
